@@ -1,0 +1,11 @@
+{
+  "columns": 3,
+  "top_n": 24,
+  "screening": {
+    "min_turnover_oku": 0,
+    "min_atr_pct": 0,
+    "min_vol_ratio": 0,
+    "only_above_vwap": false
+  },
+  "sort_by": "score"
+}

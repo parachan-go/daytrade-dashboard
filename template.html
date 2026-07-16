@@ -1,0 +1,394 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<title>デイトレード分析ダッシュボード</title>
+<script src="https://cdn.plot.ly/plotly-2.32.0.min.js"></script>
+<style>
+  :root { --bg:#12151c; --card:#1a1f2b; --line:#2a3245; --tx:#dde3ee; --sub:#8a93a8;
+          --up:#22c55e; --dn:#ef4444; --vwap:#f59e0b; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--tx);
+         font-family:"Hiragino Sans","Yu Gothic",Meiryo,sans-serif; font-size:13px; }
+  header { padding:14px 20px 8px; display:flex; flex-wrap:wrap; gap:12px; align-items:center; }
+  h1 { font-size:17px; margin:0 12px 0 0; }
+  .gen { color:var(--sub); font-size:11px; }
+  .panel { display:flex; flex-wrap:wrap; gap:10px 18px; align-items:center;
+           padding:10px 20px; background:var(--card); border-block:1px solid var(--line);
+           position:sticky; top:0; z-index:10; }
+  .panel label { color:var(--sub); display:flex; align-items:center; gap:5px; }
+  .panel input[type=number] { width:60px; background:#0f1218; color:var(--tx);
+      border:1px solid var(--line); border-radius:4px; padding:3px 5px; }
+  .panel select { background:#0f1218; color:var(--tx); border:1px solid var(--line);
+      border-radius:4px; padding:3px 5px; }
+  .daybtn { background:#0f1218; color:var(--sub); border:1px solid var(--line);
+      border-radius:5px; padding:4px 10px; cursor:pointer; }
+  .daybtn.on { background:#2b3a5e; color:#fff; border-color:#4a6bbf; }
+  #count { color:var(--sub); }
+  table { border-collapse:collapse; width:100%; margin:0; }
+  #tablewrap { padding:12px 20px 4px; overflow-x:auto; }
+  th, td { padding:5px 10px; text-align:right; border-bottom:1px solid var(--line); white-space:nowrap; }
+  th { color:var(--sub); cursor:pointer; user-select:none; font-weight:normal; }
+  th:first-child, td:first-child { text-align:left; }
+  tbody tr { cursor:pointer; }
+  tbody tr:hover { background:#232a3a; }
+  .pos { color:var(--up); } .neg { color:var(--dn); }
+  #grid { display:grid; gap:14px; padding:14px 20px 30px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:10px;
+          overflow:hidden; border-top:3px solid var(--sub); }
+  .card.above { border-top-color:var(--up); }
+  .card.below { border-top-color:var(--dn); }
+  .chead { display:flex; align-items:baseline; gap:8px; padding:8px 12px 0; flex-wrap:wrap; }
+  .chead b { font-size:14px; }
+  .badge { border-radius:4px; padding:1px 7px; font-size:12px; font-weight:bold; }
+  .badge.up { background:rgba(34,197,94,.15); color:var(--up); }
+  .badge.dn { background:rgba(239,68,68,.15); color:var(--dn); }
+  .chead .sub { color:var(--sub); font-size:11px; }
+  .plot { width:100%; height:340px; }
+  .note { color:var(--sub); padding:0 20px 20px; font-size:11px; }
+  /* セクター資金フローパネル */
+  #flow { padding:10px 20px 2px; }
+  #flow h2 { font-size:13px; color:var(--sub); margin:0 0 6px; font-weight:normal; }
+  #flowchips { display:flex; flex-wrap:wrap; gap:6px; }
+  .chip { border:1px solid var(--line); border-radius:6px; padding:4px 9px; cursor:pointer;
+          background:#0f1218; display:flex; gap:7px; align-items:baseline; font-size:12px; }
+  .chip .r { font-weight:bold; }
+  .chip .c { font-size:11px; }
+  .chip.hot { border-color:rgba(34,197,94,.6); background:rgba(34,197,94,.10); }
+  .chip.cold { opacity:.65; }
+  .chip.sel { outline:2px solid #4a6bbf; }
+  .chip.inlist::after { content:"●"; font-size:8px; color:#4a6bbf; align-self:center; }
+  .sdot { display:inline-block; width:8px; height:8px; border-radius:50%; margin-right:4px; }
+  /* 折りたたみ */
+  .sechead { cursor:pointer; user-select:none; }
+  .sechead .arr { display:inline-block; transition:transform .15s; }
+  .sechead.closed .arr { transform:rotate(-90deg); }
+  #h_rank { color:var(--sub); font-size:13px; padding:8px 20px 0; }
+  /* 用語ツールチップ */
+  [data-tip] { border-bottom:1px dotted var(--sub); cursor:help; }
+  .chip[data-tip], .badge[data-tip] { border-bottom:none; }
+  #tip { position:fixed; z-index:1000; max-width:280px; background:#0b0e14; color:var(--tx);
+         border:1px solid #4a6bbf; border-radius:8px; padding:8px 11px; font-size:12px;
+         line-height:1.55; pointer-events:none; display:none; box-shadow:0 6px 20px rgba(0,0,0,.5); }
+</style>
+</head>
+<body>
+<header>
+  <h1>デイトレード分析</h1>
+  <span class="gen">生成: <span id="gen"></span>(yfinance・約20分遅延)/ <span id="univ"></span></span>
+  <span id="daybtns"></span>
+</header>
+
+<div id="flow">
+  <h2 class="sechead" id="h_flow"><span class="arr">▾</span> <span data-tip="どの業種にお金が集まっているかの目安。TOPIX-17業種ETFの当日売買代金が過去20日平均の何倍かで計測。1.2倍以上(緑枠)=普段より資金流入。数値は「倍率」と「当日騰落率」">セクター資金フロー</span> <span id="flowstat"></span> — チップクリックで業種絞り込み</h2>
+  <div id="flowchips"></div>
+</div>
+
+<div class="panel">
+  <span class="sechead" id="h_panel"><span class="arr">▾</span> フィルタ</span>
+  <span id="panelbody" style="display:contents">
+  <label><span data-tip="1日に売買された金額の20日平均。この値以上の銘柄だけ表示。流動性の足切りに使う">売買代金</span> ≥ <input type="number" id="f_turn" min="0" step="10"> 億円</label>
+  <label><span data-tip="1日の平均値動き幅(%)。この値以上=よく動く銘柄だけ表示">ATR</span> ≥ <input type="number" id="f_atr" min="0" step="0.5"> %</label>
+  <label><span data-tip="当日出来高÷20日平均。1.5なら普段の1.5倍商いが入っている銘柄だけ表示">出来高比</span> ≥ <input type="number" id="f_vr" min="0" step="0.1"></label>
+  <label><input type="checkbox" id="f_above"> <span data-tip="現在値がVWAPより上にある(=買い方優勢の)銘柄だけ表示">VWAP上のみ</span></label>
+  <label>並び順
+    <select id="sort">
+      <option value="score">総合スコア</option>
+      <option value="dev">VWAP乖離率</option>
+      <option value="dev930">9:30VWAP比</option>
+      <option value="rate930">高値終い率</option>
+      <option value="atr_pct">ATR%</option>
+      <option value="turnover_oku">売買代金</option>
+      <option value="vol_ratio">出来高比</option>
+      <option value="chg">騰落率</option>
+    </select>
+  </label>
+  <span id="count"></span>
+  </span>
+</div>
+
+<div class="sechead" id="h_rec"><span class="arr">▾</span>
+  <span data-tip="9:30VWAPと終値の関係を過去約60営業日分記録し、銘柄ごとに集計。「一貫性」が高い=毎日同じ方向(高値終いor低値終い)に偏る=VWAPで引けの方向を予想しやすい銘柄">VWAP予測しやすさランキング</span>
+  <span style="font-weight:normal">(9:30VWAP vs 終値の記録集計・全銘柄)</span>
+  <label style="font-weight:normal" onclick="event.stopPropagation()">最低記録日数
+    <select id="recmin"><option>10</option><option selected>20</option><option>40</option></select>
+  </label>
+</div>
+<div id="recwrap" style="padding:8px 20px 4px; max-height:380px; overflow:auto">
+<table id="rectbl">
+  <thead><tr>
+    <th>#</th><th>銘柄</th><th>業種</th>
+    <th data-tip="records.csvに記録されている営業日数">日数</th>
+    <th data-tip="9:30VWAPより高い終値で引けた日の割合">高値終い率</th>
+    <th data-tip="偏りの方向。高値終い=9:30VWAPより上で引けやすい(引けにかけて強い)、低値終い=下で引けやすい(引けにかけて垂れやすい)">傾向</th>
+    <th data-tip="予測しやすさ。高値終い率とその逆(低値終い率)の大きい方。50%=五分五分で予測不能、100%=毎日同じ方向。70%以上なら傾向として使える水準">一貫性</th>
+    <th data-tip="日経225が9:30→引けで上げた日に限った高値終い率。日経の地合いが良い日のこの銘柄の傾向">日経↑時</th>
+    <th data-tip="日経225が9:30→引けで下げた日に限った高値終い率">日経↓時</th>
+    <th data-tip="連動度=日経↑時と↓時の高値終い率の差。大きい=日経次第で結果が変わる(地合いを見て使う)。小さい=日経と無関係にその銘柄固有の傾向(単独で使える)">連動度</th>
+    <th data-tip="日経連動◎(差40pp以上)/日経連動(25pp以上)=日経の方向を見てから乗るタイプ。独立=日経に関係なく同じ方向に偏る銘柄固有の癖(こちらの方が使い勝手が良い)">タイプ</th>
+    <th data-tip="終値と9:30VWAPの乖離の平均。プラスが大きい=引けにかけて上げ幅も大きい">平均9:30比</th>
+  </tr></thead><tbody></tbody>
+</table>
+</div>
+
+<div class="sechead" id="h_rank"><span class="arr">▾</span> ランキング</div>
+<div id="tablewrap"><table id="rank">
+  <thead><tr>
+    <th>銘柄</th><th>業種</th><th>終値</th>
+    <th data-tip="前日終値と比べた変化率。+2%なら前日より2%高い">騰落率</th>
+    <th data-tip="終値(最新値)がVWAPから何%離れているか。プラス=VWAPより上=当日の平均買値より高い位置にあり買い方優勢">VWAP乖離</th>
+    <th data-tip="大引け終値が「9:30時点のVWAP(寄付から30分の平均約定単価)」より何%上か下か。当日ザラ場中は暫定値">9:30比</th>
+    <th data-tip="9:30時点VWAPより高い終値で引けた日の割合。records.csvに毎日記録した累計から算出。高いほど「朝の平均値より上で引けやすい」傾向">高値終い率</th>
+    <th data-tip="その日の取引時間のうち、株価がVWAPより上にあった時間の割合。高い=1日を通して買い優勢だった">VWAP上時間</th>
+    <th data-tip="1日の平均的な値動き幅(過去14日のATR)を株価比%で表示。大きいほど1日の値幅が大きく、デイトレの利幅を取りやすい(その分リスクも大)">ATR%</th>
+    <th data-tip="1日に売買された金額の20日平均(億円)。大きいほど流動性が高く、すべらず売買しやすい。デイトレは目安100億円以上">売買代金(億)</th>
+    <th data-tip="当日出来高÷過去20日平均。1超=普段より商いが活発=資金が入っている。ザラ場中は経過時間で補正した推計">出来高比</th>
+    <th data-tip="当日始値が前日終値から何%離れて寄り付いたか。ギャップアップ/ダウンの大きさ">GAP%</th>
+    <th data-tip="デイトレ向き度の総合点(0〜100)。値動き(ATR%)35%+流動性(売買代金)35%+出来高比30%のパーセンタイル加重。母集団154銘柄内での相対評価">スコア</th>
+  </tr></thead><tbody></tbody>
+</table></div>
+
+<div id="grid"></div>
+<p class="note">VWAP乖離バー: 緑=VWAPより上(買い優勢)/赤=下(売り優勢)。カード上部の色は現在の乖離方向。
+9:30比=終値÷9:30時点VWAP−1(チャートの破線)。高値終い率=9:30VWAPより高い終値で引けた日の割合(records.csvに毎回自動記録・累積)。
+当日ザラ場中の9:30比は暫定値で、確定は大引け後の実行時に記録。出来高比=当日出来高÷過去20日平均。本ツールは分析補助であり投資判断は自己責任です。</p>
+
+<script>
+/*__DATA__*/
+
+const $ = id => document.getElementById(id);
+let day = DATA.days[DATA.days.length - 1];
+let sectorSel = null;  // 選択中の業種(nullなら全業種)
+
+// --- 業種カラーパレット(固定色で手動識別しやすく) ---
+const PALETTE = ["#60a5fa","#f472b6","#fbbf24","#34d399","#a78bfa","#fb923c",
+                 "#2dd4bf","#f87171","#c084fc","#a3e635","#38bdf8","#fda4af",
+                 "#facc15","#4ade80","#818cf8","#e879f9","#94a3b8"];
+const sectorNames = [...new Set(DATA.symbols.map(s => s.sector))];
+const allSectors = [...new Set([...(DATA.sectors||[]).map(x => x.name), ...sectorNames])];
+const sColor = name => PALETTE[allSectors.indexOf(name) % PALETTE.length];
+
+// --- セクター資金フローパネル ---
+function renderFlow() {
+  $("flowstat").textContent = DATA.flow_status === "補正あり" ? "・ザラ場中は時間補正した推計" : "";
+  const box = $("flowchips");
+  box.innerHTML = "";
+  (DATA.sectors || []).forEach(sec => {
+    const chip = document.createElement("div");
+    const hot = sec.turn_ratio >= 1.2, cold = sec.turn_ratio < 0.8;
+    chip.className = "chip" + (hot ? " hot" : cold ? " cold" : "") +
+      (sectorSel === sec.name ? " sel" : "") +
+      (sectorNames.includes(sec.name) ? " inlist" : "");
+    chip.innerHTML = `<span><span class="sdot" style="background:${sColor(sec.name)}"></span>${sec.name}</span>
+      <span class="r">${sec.turn_ratio}x</span>
+      <span class="c ${sec.chg>0?"pos":sec.chg<0?"neg":""}">${sec.chg>0?"+":""}${sec.chg}%</span>`;
+    chip.dataset.tip = `${sec.name}業種ETF(${sec.etf})の状況。売買代金が20日平均の${sec.turn_ratio}倍` +
+      `${sec.turn_ratio >= 1.2 ? "=普段より資金流入" : sec.turn_ratio < 0.8 ? "=商い閑散" : ""}。` +
+      `当日${sec.chg > 0 ? "+" : ""}${sec.chg}%、直近5日${sec.chg5d != null ? (sec.chg5d > 0 ? "+" : "") + sec.chg5d : "-"}%。` +
+      `クリックでこの業種の銘柄だけ表示`;
+    chip.onclick = () => { sectorSel = (sectorSel === sec.name) ? null : sec.name; render(); };
+    box.appendChild(chip);
+  });
+}
+
+// --- 初期値をconfigから ---
+const scr = (DATA.config && DATA.config.screening) || {};
+$("f_turn").value = scr.min_turnover_oku || 0;
+$("f_atr").value  = scr.min_atr_pct || 0;
+$("f_vr").value   = scr.min_vol_ratio || 0;
+$("f_above").checked = !!scr.only_above_vwap;
+$("sort").value = (DATA.config && DATA.config.sort_by) || "score";
+$("gen").textContent = DATA.generated;
+$("univ").textContent = `母集団${DATA.universe_count||"-"}銘柄からスコア上位${DATA.config.top_n||24}+watchlist(★)を自動選抜`;
+$("grid").style.gridTemplateColumns =
+  `repeat(auto-fill, minmax(${(DATA.config.columns||3) >= 3 ? 420 : 560}px, 1fr))`;
+
+// --- 日付ボタン ---
+DATA.days.forEach(d => {
+  const b = document.createElement("button");
+  b.className = "daybtn"; b.textContent = d.slice(5);
+  b.onclick = () => { day = d; render(); };
+  b.dataset.d = d;
+  $("daybtns").appendChild(b);
+});
+
+function metric(s, key) {
+  const ds = s.daysum[day] || {};
+  if (key === "dev") return ds.dev ?? -999;
+  if (key === "chg") return ds.chg ?? -999;
+  if (key === "dev930") return ds.dev930 ?? -999;
+  if (key === "rate930") return s.rec930 ? s.rec930.rate : -999;
+  return s.stats[key] ?? -999;
+}
+
+function filtered() {
+  const mt = +$("f_turn").value || 0, ma = +$("f_atr").value || 0,
+        mv = +$("f_vr").value || 0, ab = $("f_above").checked;
+  let list = DATA.symbols.filter(s => {
+    const ds = s.daysum[day];
+    if (!ds) return false;
+    return s.stats.turnover_oku >= mt && s.stats.atr_pct >= ma &&
+           s.stats.vol_ratio >= mv && (!ab || ds.dev > 0) &&
+           (!sectorSel || s.sector === sectorSel);
+  });
+  const k = $("sort").value;
+  list.sort((a, b) => metric(b, k) - metric(a, k));
+  return list;
+}
+
+const fmt = (v, suf="") => v == null ? "-" :
+  `<span class="${v>0?"pos":v<0?"neg":""}">${v>0?"+":""}${v}${suf}</span>`;
+
+function renderTable(list) {
+  const tb = document.querySelector("#rank tbody");
+  tb.innerHTML = list.map(s => {
+    const ds = s.daysum[day];
+    return `<tr onclick="document.getElementById('c${s.code}').scrollIntoView({behavior:'smooth'})">
+      <td><b>${s.code}</b> ${s.name}${s.pinned?" ★":""}</td>
+      <td><span class="sdot" style="background:${sColor(s.sector)}"></span>${s.sector}</td>
+      <td>${s.stats.last_close.toLocaleString()}</td>
+      <td>${fmt(ds.chg,"%")}</td><td>${fmt(ds.dev,"%")}</td><td>${fmt(ds.dev930,"%")}</td>
+      <td>${s.rec930 ? s.rec930.rate + "% (" + s.rec930.win + "/" + s.rec930.total + ")" : "-"}</td>
+      <td>${ds.above_pct}%</td>
+      <td>${s.stats.atr_pct}</td><td>${s.stats.turnover_oku.toLocaleString()}</td>
+      <td>${s.stats.vol_ratio}</td><td>${fmt(s.stats.gap_pct,"")}</td><td>${s.stats.score}</td></tr>`;
+  }).join("");
+}
+
+function renderCharts(list) {
+  const grid = $("grid");
+  grid.innerHTML = "";
+  list.forEach(s => {
+    const sr = s.series[day], ds = s.daysum[day];
+    const card = document.createElement("div");
+    card.className = "card " + (ds.dev > 0 ? "above" : "below");
+    card.id = "c" + s.code;
+    card.style.borderLeft = `3px solid ${sColor(s.sector)}`;
+    card.innerHTML = `<div class="chead"><b>${s.code} ${s.name}${s.pinned?" ★":""}</b>
+      <span class="badge ${ds.dev>0?"up":"dn"}" data-tip="終値(最新値)とVWAP(出来高加重平均価格=当日の平均約定単価)の乖離。プラス=平均買値より上=買い方優勢">VWAP ${ds.dev>0?"+":""}${ds.dev}%</span>
+      <span class="sub"><span class="sdot" style="background:${sColor(s.sector)}"></span>${s.sector}
+       / <span data-tip="前日終値との比較">騰落</span> ${ds.chg==null?"-":(ds.chg>0?"+":"")+ds.chg+"%"}
+       / <span data-tip="この日、株価がVWAPより上にあった時間の割合">VWAP上</span> ${ds.above_pct}%
+       / <span data-tip="終値が9:30時点VWAP(チャートの細い破線)より何%上か下か。ザラ場中は暫定">9:30比</span> ${ds.dev930==null?"-":(ds.dev930>0?"+":"")+ds.dev930+"%"}${
+         s.rec930 ? ` / <span data-tip="9:30VWAPより高い終値で引けた日の割合(記録の累計)">高値終い</span> ${s.rec930.rate}%(${s.rec930.win}/${s.rec930.total})` : ""}</span>
+      </div><div class="plot" id="p${s.code}"></div>`;
+    grid.appendChild(card);
+
+    const dev = sr.c.map((c, i) => sr.vwap[i] ? (c / sr.vwap[i] - 1) * 100 : 0);
+    const traces = [
+      { type:"candlestick", x:sr.t, open:sr.o, high:sr.h, low:sr.l, close:sr.c,
+        increasing:{line:{color:"#22c55e",width:1}}, decreasing:{line:{color:"#ef4444",width:1}},
+        name:"5分足", xaxis:"x", yaxis:"y" },
+      { type:"scatter", x:sr.t, y:sr.vwap, mode:"lines",
+        line:{color:"#f59e0b", width:2}, name:"VWAP", xaxis:"x", yaxis:"y" },
+      { type:"bar", x:sr.t, y:dev, name:"乖離%",
+        marker:{color:dev.map(v => v >= 0 ? "#22c55e" : "#ef4444")}, xaxis:"x", yaxis:"y2" },
+      { type:"bar", x:sr.t, y:sr.v, name:"出来高",
+        marker:{color:"#4a6bbf"}, xaxis:"x", yaxis:"y3" },
+    ];
+    if (sr.prev_close) traces.push({ type:"scatter", x:[sr.t[0], sr.t[sr.t.length-1]],
+      y:[sr.prev_close, sr.prev_close], mode:"lines", name:"前日終値",
+      line:{color:"#8a93a8", width:1, dash:"dot"}, xaxis:"x", yaxis:"y" });
+    if (sr.vwap930) traces.push({ type:"scatter", x:[sr.t[0], sr.t[sr.t.length-1]],
+      y:[sr.vwap930, sr.vwap930], mode:"lines", name:"9:30VWAP",
+      line:{color:"#f59e0b", width:1, dash:"dash"}, opacity:.55, xaxis:"x", yaxis:"y" });
+
+    Plotly.newPlot("p" + s.code, traces, {
+      margin:{l:48, r:8, t:6, b:22}, showlegend:false,
+      paper_bgcolor:"transparent", plot_bgcolor:"transparent",
+      font:{color:"#8a93a8", size:10},
+      xaxis:{type:"category", rangeslider:{visible:false}, tickmode:"array", anchor:"y3",
+             tickvals:sr.t.filter(t => t.endsWith(":00")), gridcolor:"#232a3a"},
+      yaxis:{domain:[0.42, 1], gridcolor:"#232a3a"},
+      yaxis2:{domain:[0.20, 0.40], gridcolor:"#232a3a", zerolinecolor:"#8a93a8"},
+      yaxis3:{domain:[0, 0.16], gridcolor:"#232a3a", title:{text:"出来高", font:{size:9}}},
+      annotations: (() => {
+        const last = sr.c[sr.c.length - 1];
+        // 最終営業日かつザラ場中の生成データなら「現在値(約20分遅延)」、それ以外は「終値」
+        const live = (day === DATA.days[DATA.days.length - 1] && DATA.flow_status === "補正あり");
+        const lbl = live ? "現在値" : "終値";
+        const col = sr.vwap930 ? (last >= sr.vwap930 ? "#22c55e" : "#ef4444") : "#dde3ee";
+        let txt = sr.vwap930 ? "9:30 VWAP <b>" + sr.vwap930.toLocaleString() + "</b>　" : "";
+        txt += lbl + " <span style='fill:" + col + "'><b>" + last.toLocaleString() + "</b></span>";
+        return [{ xref:"paper", yref:"paper", x:0.01, y:0.995, xanchor:"left", yanchor:"top",
+                  text:txt, font:{size:15, color:"#f59e0b"}, showarrow:false,
+                  bgcolor:"rgba(18,21,28,.75)", borderpad:3 }];
+      })(),
+    }, {displayModeBar:false, responsive:true});
+  });
+}
+
+function render() {
+  document.querySelectorAll(".daybtn").forEach(b => b.classList.toggle("on", b.dataset.d === day));
+  renderFlow();
+  const list = filtered();
+  $("count").textContent = `表示 ${list.length} / ${DATA.symbols.length} 銘柄` +
+    (sectorSel ? `(${sectorSel})` : "");
+  renderTable(list);
+  renderCharts(list);
+}
+
+["f_turn","f_atr","f_vr","f_above","sort"].forEach(id => $(id).onchange = render);
+
+// --- 各セクションの折りたたみ(状態はlocalStorageに保存) ---
+function setupToggle(headId, bodyId, key) {
+  const h = $(headId), b = $(bodyId);
+  let closed = false;
+  try { closed = localStorage.getItem("tgl_" + key) === "1"; } catch (e) {}
+  const apply = () => { b.style.display = closed ? "none" : ""; h.classList.toggle("closed", closed); };
+  h.onclick = () => { closed = !closed;
+    try { localStorage.setItem("tgl_" + key, closed ? "1" : "0"); } catch (e) {}
+    apply(); };
+  apply();
+}
+setupToggle("h_flow", "flowchips", "flow");
+setupToggle("h_panel", "panelbody", "panel");
+setupToggle("h_rank", "tablewrap", "rank");
+setupToggle("h_rec", "recwrap", "rec");
+
+// --- VWAP予測しやすさランキング(日付非依存・全記録銘柄) ---
+function renderRec() {
+  const min = +$("recmin").value || 0;
+  const list = (DATA.rec_ranking || []).filter(r => r.total >= min);
+  const tb = document.querySelector("#rectbl tbody");
+  tb.innerHTML = list.map((r, i) => `
+    <tr ${r.shown ? `onclick="document.getElementById('c${r.code}')?.scrollIntoView({behavior:'smooth'})"` : ""}
+        ${r.shown ? "" : 'style="opacity:.6;cursor:default"'}>
+      <td>${i + 1}</td>
+      <td><b>${r.code}</b> ${r.name}${r.shown ? " 📈" : ""}</td>
+      <td><span class="sdot" style="background:${sColor(r.sector)}"></span>${r.sector}</td>
+      <td>${r.total}</td><td>${r.rate}%</td>
+      <td class="${r.trend === "高値終い" ? "pos" : "neg"}">${r.trend}</td>
+      <td><b>${r.cons}%</b></td>
+      <td>${r.up_rate == null ? "-" : r.up_rate + "%"}</td>
+      <td>${r.dn_rate == null ? "-" : r.dn_rate + "%"}</td>
+      <td>${r.spread == null ? "-" : (r.spread > 0 ? "+" : "") + r.spread + "pp"}</td>
+      <td class="${r.mtype === "独立" ? "pos" : ""}">${r.mtype}</td>
+      <td>${fmt(r.avg_dev, "%")}</td>
+    </tr>`).join("");
+}
+$("recmin").onchange = renderRec;
+renderRec();
+
+// --- 用語ツールチップ(data-tip属性の要素にカーソルで表示) ---
+const tipEl = document.createElement("div");
+tipEl.id = "tip";
+document.body.appendChild(tipEl);
+document.addEventListener("mouseover", e => {
+  const t = e.target.closest("[data-tip]");
+  if (!t) { tipEl.style.display = "none"; return; }
+  tipEl.textContent = t.dataset.tip;
+  tipEl.style.display = "block";
+});
+document.addEventListener("mousemove", e => {
+  if (tipEl.style.display !== "block") return;
+  const pad = 14, w = tipEl.offsetWidth, h = tipEl.offsetHeight;
+  let x = e.clientX + pad, y = e.clientY + pad;
+  if (x + w > innerWidth - 8) x = e.clientX - w - pad;
+  if (y + h > innerHeight - 8) y = e.clientY - h - pad;
+  tipEl.style.left = x + "px"; tipEl.style.top = y + "px";
+});
+render();
+</script>
+</body>
+</html>
