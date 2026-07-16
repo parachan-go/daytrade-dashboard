@@ -1,0 +1,38 @@
+name: update-dashboard
+
+on:
+  schedule:
+    - cron: "45 6 * * 1-5"   # UTC 6:45 = JST 15:45 平日(Actionsのcronは数分〜遅延あり)
+  workflow_dispatch:          # 手動実行も可能
+
+permissions:
+  contents: write
+
+env:
+  TZ: Asia/Tokyo              # 重要: 15:30以降と判定させて当日分を確定記録するため
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install yfinance pandas numpy
+
+      - name: Run analysis
+        run: python run.py
+
+      - name: Commit results and publish
+        run: |
+          mkdir -p docs
+          cp dashboard.html docs/index.html
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add records.csv market.csv dashboard.html docs/index.html
+          git diff --cached --quiet || git commit -m "auto update $(date +'%Y-%m-%d %H:%M')"
+          git push
